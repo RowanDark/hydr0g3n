@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -57,9 +58,15 @@ func main() {
 		BinaryName:  filepath.Base(os.Args[0]),
 	}
 
-	if err := engine.Run(cfg); err != nil {
+	ctx := context.Background()
+	results, err := engine.Run(ctx, cfg)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
 		os.Exit(1)
+	}
+
+	for range results {
+		// Output handling will be implemented by the output layer.
 	}
 }
 
