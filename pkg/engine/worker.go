@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"hydr0g3n/pkg/httpclient"
+	"hydr0g3n/pkg/templater"
 )
 
 // Result captures the outcome of a single request executed by the engine.
@@ -65,6 +66,8 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 	results := make(chan Result)
 	client := httpclient.New(timeout)
 
+	tpl := templater.New()
+
 	go func() {
 		defer close(jobs)
 		defer file.Close()
@@ -76,7 +79,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 				continue
 			}
 
-			url := applyTemplate(cfg.URL, word)
+			url := tpl.Expand(cfg.URL, word)
 
 			select {
 			case <-ctx.Done():
@@ -151,20 +154,4 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 	result.ContentLength = resp.ContentLength
 
 	return result
-}
-
-func applyTemplate(template, value string) string {
-	switch {
-	case strings.Contains(template, "{{FUZZ}}"):
-		return strings.ReplaceAll(template, "{{FUZZ}}", value)
-	case strings.Contains(template, "FUZZ"):
-		return strings.ReplaceAll(template, "FUZZ", value)
-	case strings.Contains(template, "%s"):
-		return fmt.Sprintf(template, value)
-	default:
-		if strings.HasSuffix(template, "/") {
-			return template + value
-		}
-		return template + "/" + value
-	}
 }
