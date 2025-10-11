@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"hydr0g3n/pkg/engine"
+	"hydr0g3n/pkg/matcher"
 	"hydr0g3n/pkg/output"
 )
 
@@ -25,6 +26,8 @@ func main() {
 		outputFormat = flag.String("output-format", "jsonl", "Format for --output (jsonl)")
 		beginner     = flag.Bool("beginner", false, "Enable beginner-friendly defaults")
 		profile      = flag.String("profile", "", "Named execution profile to load")
+		matchStatus  = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
+		filterSize   = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
 	)
 
 	flag.Usage = func() {
@@ -44,6 +47,20 @@ func main() {
 	if *wordlist == "" {
 		exitWithUsage("a wordlist must be provided with -w")
 	}
+
+	statuses, err := matcher.ParseStatusList(*matchStatus)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+		os.Exit(2)
+	}
+
+	sizeRange, err := matcher.ParseSizeRange(*filterSize)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+		os.Exit(2)
+	}
+
+	resultMatcher := matcher.New(matcher.Options{Statuses: statuses, Size: sizeRange})
 
 	selectedProfile := *profile
 	if *beginner {
@@ -98,12 +115,14 @@ func main() {
 	var runErr error
 
 	for res := range results {
-		if err := prettyWriter.Write(res); err != nil && writerErr == nil {
-			writerErr = err
-		}
-
 		if jsonlWriter != nil {
 			if err := jsonlWriter.Write(res); err != nil && writerErr == nil {
+				writerErr = err
+			}
+		}
+
+		if resultMatcher.Matches(res) {
+			if err := prettyWriter.Write(res); err != nil && writerErr == nil {
 				writerErr = err
 			}
 		}
