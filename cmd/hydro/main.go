@@ -12,6 +12,7 @@ import (
 	"hydr0g3n/pkg/engine"
 	"hydr0g3n/pkg/matcher"
 	"hydr0g3n/pkg/output"
+	"hydr0g3n/pkg/store"
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 		profile      = flag.String("profile", "", "Named execution profile to load")
 		matchStatus  = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
 		filterSize   = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
+		resumePath   = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
 	)
 
 	flag.Usage = func() {
@@ -67,6 +69,44 @@ func main() {
 		selectedProfile = "beginner"
 	}
 
+	ctx := context.Background()
+
+	binaryBase := filepath.Base(os.Args[0])
+
+	var (
+		resumeDB    *store.SQLite
+		runRecorder *store.Run
+	)
+
+	if *resumePath != "" {
+		var err error
+		resumeDB, err = store.OpenSQLite(*resumePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(1)
+		}
+
+		defer func() {
+			if err := resumeDB.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "%s: close resume db: %v\n", binaryName, err)
+			}
+		}()
+
+		runRecorder, err = resumeDB.StartRun(ctx, store.RunMetadata{
+			TargetURL:   *targetURL,
+			Wordlist:    *wordlist,
+			Concurrency: *concurrency,
+			Timeout:     *timeout,
+			Profile:     selectedProfile,
+			Beginner:    *beginner,
+			BinaryName:  binaryBase,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(1)
+		}
+	}
+
 	cfg := engine.Config{
 		URL:         *targetURL,
 		Wordlist:    *wordlist,
@@ -75,10 +115,10 @@ func main() {
 		OutputPath:  *outputPath,
 		Profile:     selectedProfile,
 		Beginner:    *beginner,
-		BinaryName:  filepath.Base(os.Args[0]),
+		BinaryName:  binaryBase,
+		RunRecorder: runRecorder,
 	}
 
-	ctx := context.Background()
 	results, err := engine.Run(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
@@ -121,7 +161,19 @@ func main() {
 			}
 		}
 
-		if resultMatcher.Matches(res) {
+		matches := resultMatcher.Matches(res)
+		if matches {
+			if runRecorder != nil {
+				if err := runRecorder.RecordHit(ctx, store.HitRecord{
+					Path:          res.URL,
+					StatusCode:    res.StatusCode,
+					ContentLength: res.ContentLength,
+					Duration:      res.Duration,
+				}); err != nil && writerErr == nil {
+					writerErr = err
+				}
+			}
+
 			if err := prettyWriter.Write(res); err != nil && writerErr == nil {
 				writerErr = err
 			}
