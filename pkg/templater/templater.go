@@ -1,6 +1,10 @@
 package templater
 
-import "strings"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // DefaultPlaceholder is the token substituted when expanding templates.
 const DefaultPlaceholder = "FUZZ"
@@ -69,4 +73,138 @@ func (t *Templater) Expand(template, payload string) string {
 		return template + payload
 	}
 	return template + "/" + payload
+}
+
+// ExpandPayload returns the list of payloads obtained by expanding ffuf-style
+// brace expressions ("{a,b}") and numeric ranges ("[1-10]") found within the
+// provided payload string. When no expandable expressions are found, the
+// original payload is returned.
+func (t *Templater) ExpandPayload(payload string) []string {
+	if payload == "" {
+		return []string{""}
+	}
+
+	results := []string{payload}
+
+	for {
+		expanded := make([]string, 0, len(results))
+		changed := false
+
+		for _, current := range results {
+			variants, ok := expandOnce(current)
+			if ok {
+				expanded = append(expanded, variants...)
+				changed = true
+				continue
+			}
+
+			expanded = append(expanded, current)
+		}
+
+		results = expanded
+		if !changed {
+			break
+		}
+	}
+
+	return results
+}
+
+func expandOnce(payload string) ([]string, bool) {
+	for i := 0; i < len(payload); i++ {
+		switch payload[i] {
+		case '{':
+			closing := strings.IndexByte(payload[i+1:], '}')
+			if closing < 0 {
+				continue
+			}
+
+			closing += i + 1
+			options := strings.Split(payload[i+1:closing], ",")
+			if len(options) == 0 {
+				continue
+			}
+
+			prefix := payload[:i]
+			suffix := payload[closing+1:]
+
+			expanded := make([]string, 0, len(options))
+			for _, opt := range options {
+				expanded = append(expanded, prefix+strings.TrimSpace(opt)+suffix)
+			}
+
+			return expanded, true
+
+		case '[':
+			closing := strings.IndexByte(payload[i+1:], ']')
+			if closing < 0 {
+				continue
+			}
+
+			closing += i + 1
+			contents := strings.TrimSpace(payload[i+1 : closing])
+			parts := strings.SplitN(contents, "-", 2)
+			if len(parts) != 2 {
+				continue
+			}
+
+			startStr := strings.TrimSpace(parts[0])
+			endStr := strings.TrimSpace(parts[1])
+
+			if startStr == "" || endStr == "" {
+				continue
+			}
+
+			start, err := strconv.Atoi(startStr)
+			if err != nil {
+				continue
+			}
+
+			end, err := strconv.Atoi(endStr)
+			if err != nil {
+				continue
+			}
+
+			prefix := payload[:i]
+			suffix := payload[closing+1:]
+
+			width := 0
+			if len(startStr) == len(endStr) && (strings.HasPrefix(startStr, "0") || strings.HasPrefix(endStr, "0")) {
+				width = len(startStr)
+			}
+
+			step := 1
+			if start > end {
+				step = -1
+			}
+
+			count := 1 + abs(start-end)
+			expanded := make([]string, 0, count)
+			for value := start; ; value += step {
+				var formatted string
+				if width > 0 {
+					formatted = fmt.Sprintf("%0*d", width, value)
+				} else {
+					formatted = strconv.Itoa(value)
+				}
+
+				expanded = append(expanded, prefix+formatted+suffix)
+
+				if value == end {
+					break
+				}
+			}
+
+			return expanded, true
+		}
+	}
+
+	return nil, false
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
