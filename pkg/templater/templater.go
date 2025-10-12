@@ -1,9 +1,6 @@
 package templater
 
-import (
-	"fmt"
-	"strings"
-)
+import "strings"
 
 // DefaultPlaceholder is the token substituted when expanding templates.
 const DefaultPlaceholder = "FUZZ"
@@ -42,17 +39,34 @@ func (t *Templater) Expand(template, payload string) string {
 	}
 
 	doublePlaceholder := "{{" + placeholder + "}}"
-	switch {
-	case strings.Contains(template, doublePlaceholder):
-		return strings.ReplaceAll(template, doublePlaceholder, payload)
-	case strings.Contains(template, placeholder):
-		return strings.ReplaceAll(template, placeholder, payload)
-	case strings.Contains(template, "%s"):
-		return fmt.Sprintf(template, payload)
-	default:
-		if strings.HasSuffix(template, "/") {
-			return template + payload
-		}
-		return template + "/" + payload
+	expanded := template
+
+	hasDouble := strings.Contains(template, doublePlaceholder)
+	if hasDouble {
+		expanded = strings.ReplaceAll(expanded, doublePlaceholder, payload)
 	}
+
+	templateWithoutDouble := template
+	if hasDouble {
+		templateWithoutDouble = strings.ReplaceAll(templateWithoutDouble, doublePlaceholder, "")
+	}
+
+	hasPlain := strings.Contains(templateWithoutDouble, placeholder)
+	if hasPlain {
+		expanded = strings.ReplaceAll(expanded, placeholder, payload)
+	}
+
+	hasFormat := strings.Contains(template, "%s")
+	if hasFormat {
+		expanded = strings.ReplaceAll(expanded, "%s", payload)
+	}
+
+	if hasDouble || hasPlain || hasFormat {
+		return expanded
+	}
+
+	if strings.HasSuffix(template, "/") {
+		return template + payload
+	}
+	return template + "/" + payload
 }
