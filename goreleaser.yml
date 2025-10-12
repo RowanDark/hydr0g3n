@@ -31,6 +31,33 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+signs:
+  - id: gpg-archives
+    cmd: sh
+    args:
+      - -c
+      - |
+        if [ -z "${GPG_FINGERPRINT}" ]; then
+          echo "Skipping archive signing because GPG_FINGERPRINT is empty." >&2
+          exit 0
+        fi
+        gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}" \
+          --local-user "${GPG_FINGERPRINT}" --output "${signature}" --detach-sign --armor "${artifact}"
+    artifacts: archive
+    signature: "${artifact}.asc"
+  - id: gpg-checksum
+    cmd: sh
+    args:
+      - -c
+      - |
+        if [ -z "${GPG_FINGERPRINT}" ]; then
+          echo "Skipping checksum signing because GPG_FINGERPRINT is empty." >&2
+          exit 0
+        fi
+        gpg --batch --yes --pinentry-mode loopback --passphrase "${GPG_PASSPHRASE}" \
+          --local-user "${GPG_FINGERPRINT}" --output "${signature}" --detach-sign --armor "${artifact}"
+    artifacts: checksum
+    signature: "${artifact}.asc"
 release:
   draft: false
   prerelease: false
