@@ -120,3 +120,41 @@ func TestMatcherMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestMatcherBaselineSimilarity(t *testing.T) {
+	baseline := []byte("This is the default 404 page. Nothing to see here.")
+	matcher := New(Options{
+		SimilarityThreshold: 0.6,
+		BaselineBody:        baseline,
+	})
+
+	similar := engine.Result{
+		StatusCode:    404,
+		ContentLength: 150,
+		Body:          []byte("This is the default 404 page nothing to see here with maybe a link."),
+	}
+
+	similarity := jaccardSimilarity(matcher.baseline, buildShingles(similar.Body, matcher.shingleSize))
+	if similarity < 0.6 {
+		t.Fatalf("expected similarity >= 0.6, got %f", similarity)
+	}
+
+	if matcher.Matches(similar) {
+		t.Fatalf("expected similar body to be filtered")
+	}
+
+	different := engine.Result{
+		StatusCode:    404,
+		ContentLength: 120,
+		Body:          []byte("Welcome to the admin panel"),
+	}
+
+	if !matcher.Matches(different) {
+		t.Fatalf("expected different body to pass")
+	}
+
+	emptyBody := engine.Result{StatusCode: 404}
+	if !matcher.Matches(emptyBody) {
+		t.Fatalf("expected empty body to pass when baseline filtering enabled")
+	}
+}
