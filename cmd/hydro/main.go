@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,17 +20,19 @@ func main() {
 	const binaryName = "hydro"
 
 	var (
-		targetURL    = flag.String("u", "", "Target URL or template (required)")
-		wordlist     = flag.String("w", "", "Path to the wordlist file (required)")
-		concurrency  = flag.Int("concurrency", 10, "Number of concurrent workers")
-		timeout      = flag.Duration("timeout", 10*time.Second, "Request timeout duration")
-		outputPath   = flag.String("output", "", "Path to write output results")
-		outputFormat = flag.String("output-format", "jsonl", "Format for --output (jsonl)")
-		beginner     = flag.Bool("beginner", false, "Enable beginner-friendly defaults")
-		profile      = flag.String("profile", "", "Named execution profile to load")
-		matchStatus  = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
-		filterSize   = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
-		resumePath   = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
+		targetURL       = flag.String("u", "", "Target URL or template (required)")
+		wordlist        = flag.String("w", "", "Path to the wordlist file (required)")
+		concurrency     = flag.Int("concurrency", 10, "Number of concurrent workers")
+		timeout         = flag.Duration("timeout", 10*time.Second, "Request timeout duration")
+		outputPath      = flag.String("output", "", "Path to write output results")
+		outputFormat    = flag.String("output-format", "jsonl", "Format for --output (jsonl)")
+		beginner        = flag.Bool("beginner", false, "Enable beginner-friendly defaults")
+		profile         = flag.String("profile", "", "Named execution profile to load")
+		matchStatus     = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
+		filterSize      = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
+		resumePath      = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
+		methodFlag      = flag.String("method", http.MethodHead, "HTTP method to use for requests (GET, HEAD, POST)")
+		followRedirects = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
 	)
 
 	flag.Usage = func() {
@@ -48,6 +51,18 @@ func main() {
 
 	if *wordlist == "" {
 		exitWithUsage("a wordlist must be provided with -w")
+	}
+
+	method := strings.ToUpper(strings.TrimSpace(*methodFlag))
+	if method == "" {
+		method = http.MethodHead
+	}
+
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost:
+	default:
+		fmt.Fprintf(os.Stderr, "%s: unsupported HTTP method %q\n", binaryName, method)
+		os.Exit(2)
 	}
 
 	statuses, err := matcher.ParseStatusList(*matchStatus)
@@ -108,15 +123,17 @@ func main() {
 	}
 
 	cfg := engine.Config{
-		URL:         *targetURL,
-		Wordlist:    *wordlist,
-		Concurrency: *concurrency,
-		Timeout:     *timeout,
-		OutputPath:  *outputPath,
-		Profile:     selectedProfile,
-		Beginner:    *beginner,
-		BinaryName:  binaryBase,
-		RunRecorder: runRecorder,
+		URL:             *targetURL,
+		Wordlist:        *wordlist,
+		Concurrency:     *concurrency,
+		Timeout:         *timeout,
+		OutputPath:      *outputPath,
+		Profile:         selectedProfile,
+		Beginner:        *beginner,
+		BinaryName:      binaryBase,
+		RunRecorder:     runRecorder,
+		Method:          method,
+		FollowRedirects: *followRedirects,
 	}
 
 	results, err := engine.Run(ctx, cfg)

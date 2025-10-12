@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -26,19 +27,21 @@ type Result struct {
 
 // Config represents the parameters required to execute a fuzzing run.
 type Config struct {
-	URL         string
-	Wordlist    string
-	Concurrency int
-	Timeout     time.Duration
-	OutputPath  string
-	Profile     string
-	Beginner    bool
-	BinaryName  string
-	RunRecorder *store.Run
+	URL             string
+	Wordlist        string
+	Concurrency     int
+	Timeout         time.Duration
+	OutputPath      string
+	Profile         string
+	Beginner        bool
+	BinaryName      string
+	RunRecorder     *store.Run
+	Method          string
+	FollowRedirects bool
 }
 
 // Run starts the fuzzing engine with the provided configuration. It launches a
-// worker pool that performs concurrent HTTP HEAD requests. The caller receives a
+// worker pool that performs concurrent HTTP requests using the configured method. The caller receives a
 // channel of Result entries and is responsible for consuming it until closed.
 func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 	if cfg.URL == "" {
@@ -66,7 +69,12 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 
 	jobs := make(chan string)
 	results := make(chan Result)
-	client := httpclient.New(timeout)
+	method := strings.ToUpper(cfg.Method)
+	if method == "" {
+		method = http.MethodHead
+	}
+
+	client := httpclient.New(timeout, cfg.FollowRedirects)
 
 	tpl := templater.New()
 
@@ -131,7 +139,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 						return
 					}
 
-					res := executeRequest(ctx, client, url, timeout)
+					res := executeRequest(ctx, client, url, timeout, method)
 
 					select {
 					case <-ctx.Done():
@@ -151,7 +159,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 	return results, nil
 }
 
-func executeRequest(ctx context.Context, client *httpclient.Client, url string, timeout time.Duration) Result {
+func executeRequest(ctx context.Context, client *httpclient.Client, url string, timeout time.Duration, method string) Result {
 	result := Result{URL: url}
 
 	reqCtx := ctx
@@ -162,7 +170,7 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 	}
 
 	start := time.Now()
-	resp, err := client.Head(reqCtx, url)
+	resp, err := client.Request(reqCtx, method, url)
 	result.Duration = time.Since(start)
 	if err != nil {
 		result.Err = err
