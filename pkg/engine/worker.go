@@ -244,25 +244,32 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 			continue
 		}
 
-		url := r.tpl.Expand(r.target, word)
+		payloads := r.tpl.ExpandPayload(word)
+		for _, payload := range payloads {
+			url := r.tpl.Expand(r.target, payload)
 
-		if r.runRecorder != nil {
-			inserted, err := r.runRecorder.MarkAttempt(r.ctx, url)
-			if err != nil {
-				if !r.emit(Result{URL: url, Err: fmt.Errorf("record attempt: %w", err)}) {
-					stop = true
-					break
+			if r.runRecorder != nil {
+				inserted, err := r.runRecorder.MarkAttempt(r.ctx, url)
+				if err != nil {
+					if !r.emit(Result{URL: url, Err: fmt.Errorf("record attempt: %w", err)}) {
+						stop = true
+						break
+					}
+					continue
 				}
-				continue
+
+				if !inserted {
+					continue
+				}
 			}
 
-			if !inserted {
-				continue
+			if !r.enqueue(jobs, url) {
+				stop = true
+				break
 			}
 		}
 
-		if !r.enqueue(jobs, url) {
-			stop = true
+		if stop {
 			break
 		}
 	}
