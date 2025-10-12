@@ -2,12 +2,15 @@ package engine
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,6 +46,7 @@ type Config struct {
 	RunRecorder     *store.Run
 	Method          string
 	FollowRedirects bool
+	PreHook         string
 }
 
 // Run starts the fuzzing engine with the provided configuration. It launches a
@@ -94,6 +98,11 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 		}
 	}
 
+	requestOpts, err := runPreHook(ctx, cfg.PreHook)
+	if err != nil {
+		return nil, err
+	}
+
 	go func() {
 		defer close(results)
 
@@ -107,6 +116,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 			tpl:         tpl,
 			runRecorder: runRecorder,
 			results:     results,
+			requestOpts: requestOpts,
 		}
 
 		if quickEnabled {
@@ -129,7 +139,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 	return results, nil
 }
 
-func executeRequest(ctx context.Context, client *httpclient.Client, url string, timeout time.Duration, method string) Result {
+func executeRequest(ctx context.Context, client *httpclient.Client, url string, timeout time.Duration, method string, opts *httpclient.RequestOptions) Result {
 	result := Result{URL: url}
 
 	reqCtx := ctx
@@ -140,7 +150,7 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 	}
 
 	start := time.Now()
-	resp, err := client.Request(reqCtx, method, url)
+	resp, err := client.Request(reqCtx, method, url, opts)
 	result.Duration = time.Since(start)
 	if err != nil {
 		result.Err = err
@@ -174,6 +184,7 @@ type stageRunner struct {
 	tpl         *templater.Templater
 	runRecorder *store.Run
 	results     chan<- Result
+	requestOpts *httpclient.RequestOptions
 }
 
 func (r *stageRunner) run(wordlistPath string) (bool, error) {
@@ -199,7 +210,7 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 					return
 				}
 
-				res := executeRequest(r.ctx, r.client, url, r.timeout, r.method)
+				res := executeRequest(r.ctx, r.client, url, r.timeout, r.method, r.requestOpts)
 
 				if res.Err == nil && isQuickPositive(res.StatusCode) {
 					positive.Store(true)
@@ -280,6 +291,59 @@ func (r *stageRunner) enqueue(jobs chan<- string, url string) bool {
 	case jobs <- url:
 		return true
 	}
+}
+
+type preHookResponse struct {
+	Cookie  string            `json:"cookie"`
+	Headers map[string]string `json:"headers"`
+}
+
+func runPreHook(ctx context.Context, command string) (*httpclient.RequestOptions, error) {
+	if strings.TrimSpace(command) == "" {
+		return nil, nil
+	}
+
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("pre-hook: %w", err)
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		return nil, errors.New("pre-hook: empty output")
+	}
+
+	var parsed preHookResponse
+	if err := json.Unmarshal([]byte(output), &parsed); err != nil {
+		return nil, fmt.Errorf("pre-hook: decode output: %w", err)
+	}
+
+	opts := &httpclient.RequestOptions{}
+
+	if parsed.Cookie != "" {
+		opts.Cookie = parsed.Cookie
+	}
+
+	if len(parsed.Headers) > 0 {
+		headers := make(http.Header, len(parsed.Headers))
+		for key, value := range parsed.Headers {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			headers.Set(key, value)
+		}
+		opts.Headers = headers
+	}
+
+	if opts.Cookie == "" && len(opts.Headers) == 0 {
+		return nil, nil
+	}
+
+	return opts, nil
 }
 
 func locateQuickWordlist(primary string) string {

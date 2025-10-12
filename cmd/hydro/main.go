@@ -43,6 +43,7 @@ func main() {
 		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
 		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
+		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
 	)
 
 	flag.Usage = func() {
@@ -149,6 +150,9 @@ func main() {
 	if *resumePath != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("resume_db=%s", *resumePath))
 	}
+	if strings.TrimSpace(*preHook) != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("pre_hook=%s", strings.TrimSpace(*preHook)))
+	}
 	if selectedProfile != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("profile=%s", selectedProfile))
 	}
@@ -223,6 +227,7 @@ func main() {
 		RunRecorder:     runRecorder,
 		Method:          method,
 		FollowRedirects: *followRedirects,
+		PreHook:         strings.TrimSpace(*preHook),
 	}
 
 	results, err := engine.Run(ctx, cfg)
@@ -359,7 +364,7 @@ func captureBaseline(ctx context.Context, target string, timeout time.Duration, 
 		defer cancel()
 	}
 
-	resp, err := client.Request(reqCtx, http.MethodGet, url)
+	resp, err := client.Request(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
