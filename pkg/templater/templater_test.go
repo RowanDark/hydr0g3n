@@ -115,3 +115,14 @@ func TestExpandPayloadCombination(t *testing.T) {
 		t.Fatalf("ExpandPayload returned %v, want %v", got, want)
 	}
 }
+
+func TestExpandUsesDefaultPlaceholderWhenEmpty(t *testing.T) {
+	tpl := NewWithPlaceholder("")
+
+	got := tpl.Expand("https://target/FUZZ", "value")
+	want := "https://target/value"
+
+	if got != want {
+		t.Fatalf("Expand returned %q, want %q", got, want)
+	}
+}
