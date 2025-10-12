@@ -20,6 +20,17 @@ type JSONLWriter struct {
 	closer io.Closer
 }
 
+// RunHeader describes metadata emitted as the first JSONL entry for a run.
+type RunHeader struct {
+	Type      string   `json:"type"`
+	RunID     string   `json:"run_id"`
+	TargetURL string   `json:"target_url,omitempty"`
+	Wordlist  string   `json:"wordlist,omitempty"`
+	StartedAt string   `json:"started_at,omitempty"`
+	Config    []string `json:"config,omitempty"`
+	Payloads  []string `json:"payloads,omitempty"`
+}
+
 // NewJSONLWriter returns a JSONLWriter that writes to w.
 func NewJSONLWriter(w io.Writer) *JSONLWriter {
 	bw := bufio.NewWriter(w)
@@ -39,6 +50,28 @@ func NewJSONLFile(path string) (*JSONLWriter, error) {
 	writer := NewJSONLWriter(file)
 	writer.closer = file
 	return writer, nil
+}
+
+// WriteHeader writes a metadata entry describing the run before any results.
+func (j *JSONLWriter) WriteHeader(header RunHeader) error {
+	if header.Type == "" {
+		header.Type = "run"
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	if err := j.enc.Encode(header); err != nil {
+		return err
+	}
+
+	if j.flush != nil {
+		if err := j.flush(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Write appends a result entry to the stream.

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"hydr0g3n/pkg/config"
 	"hydr0g3n/pkg/engine"
 	"hydr0g3n/pkg/httpclient"
 	"hydr0g3n/pkg/matcher"
@@ -37,6 +38,7 @@ func main() {
 		filterSize          = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
 		resumePath          = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
 		methodFlag          = flag.String("method", http.MethodHead, "HTTP method to use for requests (GET, HEAD, POST)")
+		runID               = flag.String("run-id", "", "Override the deterministic run identifier used for persistence")
 		followRedirects     = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
 		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
 		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
@@ -115,6 +117,66 @@ func main() {
 
 	binaryBase := filepath.Base(os.Args[0])
 
+	runConfigEntries := []string{
+		fmt.Sprintf("target_url=%s", strings.TrimSpace(*targetURL)),
+		fmt.Sprintf("wordlist=%s", strings.TrimSpace(*wordlist)),
+		fmt.Sprintf("method=%s", method),
+		fmt.Sprintf("concurrency=%d", *concurrency),
+		fmt.Sprintf("timeout=%s", timeout.String()),
+		fmt.Sprintf("follow_redirects=%t", *followRedirects),
+		fmt.Sprintf("similarity_threshold=%.6f", *similarityThreshold),
+		fmt.Sprintf("no_baseline=%t", *noBaseline),
+		fmt.Sprintf("beginner=%t", *beginner),
+		fmt.Sprintf("binary=%s", binaryBase),
+	}
+
+	if *matchStatus != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("match_status=%s", strings.TrimSpace(*matchStatus)))
+	}
+	if *filterSize != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("filter_size=%s", strings.TrimSpace(*filterSize)))
+	}
+	if *outputPath != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("output_path=%s", *outputPath))
+	}
+	if *outputFormat != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("output_format=%s", strings.ToLower(*outputFormat)))
+	}
+	if *resumePath != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("resume_db=%s", *resumePath))
+	}
+	if selectedProfile != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("profile=%s", selectedProfile))
+	}
+
+	if prof, ok := config.LookupProfile(selectedProfile); ok {
+		runConfigEntries = append(runConfigEntries, prof.RunHashConfig()...)
+	}
+
+	payloadEntries := []string{strings.TrimSpace(*wordlist)}
+
+	runMeta := store.RunMetadata{
+		TargetURL:   strings.TrimSpace(*targetURL),
+		Wordlist:    strings.TrimSpace(*wordlist),
+		Concurrency: *concurrency,
+		Timeout:     *timeout,
+		Profile:     selectedProfile,
+		Beginner:    *beginner,
+		BinaryName:  binaryBase,
+		StartedAt:   time.Now().UTC(),
+		RunID:       strings.TrimSpace(*runID),
+		ConfigList:  runConfigEntries,
+		PayloadList: payloadEntries,
+	}
+
+	if runMeta.RunID == "" {
+		runMeta.RunID = runMeta.Hash()
+	}
+
+	runIdentifier := runMeta.RunID
+	normalizedConfig := runMeta.ConfigEntries()
+	normalizedPayloads := runMeta.PayloadEntries()
+
 	var (
 		resumeDB    *store.SQLite
 		runRecorder *store.Run
@@ -134,18 +196,14 @@ func main() {
 			}
 		}()
 
-		runRecorder, err = resumeDB.StartRun(ctx, store.RunMetadata{
-			TargetURL:   *targetURL,
-			Wordlist:    *wordlist,
-			Concurrency: *concurrency,
-			Timeout:     *timeout,
-			Profile:     selectedProfile,
-			Beginner:    *beginner,
-			BinaryName:  binaryBase,
-		})
+		runRecorder, err = resumeDB.StartRun(ctx, runMeta)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
 			os.Exit(1)
+		}
+
+		if stored := strings.TrimSpace(runRecorder.RunID()); stored != "" {
+			runIdentifier = stored
 		}
 	}
 
@@ -193,6 +251,22 @@ func main() {
 		default:
 			fmt.Fprintf(os.Stderr, "%s: unsupported output format %q\n", binaryName, format)
 			os.Exit(2)
+		}
+	}
+
+	if jsonlWriter != nil {
+		header := output.RunHeader{
+			RunID:     runIdentifier,
+			TargetURL: runMeta.TargetURL,
+			Wordlist:  runMeta.Wordlist,
+			StartedAt: runMeta.StartedAt.Format(time.RFC3339Nano),
+			Config:    normalizedConfig,
+			Payloads:  normalizedPayloads,
+		}
+
+		if err := jsonlWriter.WriteHeader(header); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(1)
 		}
 	}
 
