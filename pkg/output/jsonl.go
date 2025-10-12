@@ -14,10 +14,11 @@ import (
 
 // JSONLWriter writes engine results as newline-delimited JSON objects.
 type JSONLWriter struct {
-	mu     sync.Mutex
-	enc    *json.Encoder
-	flush  func() error
-	closer io.Closer
+	mu                sync.Mutex
+	enc               *json.Encoder
+	flush             func() error
+	closer            io.Closer
+	includeSimilarity bool
 }
 
 // RunHeader describes metadata emitted as the first JSONL entry for a run.
@@ -32,22 +33,23 @@ type RunHeader struct {
 }
 
 // NewJSONLWriter returns a JSONLWriter that writes to w.
-func NewJSONLWriter(w io.Writer) *JSONLWriter {
+func NewJSONLWriter(w io.Writer, includeSimilarity bool) *JSONLWriter {
 	bw := bufio.NewWriter(w)
 	return &JSONLWriter{
-		enc:   json.NewEncoder(bw),
-		flush: bw.Flush,
+		enc:               json.NewEncoder(bw),
+		flush:             bw.Flush,
+		includeSimilarity: includeSimilarity,
 	}
 }
 
 // NewJSONLFile creates a JSONLWriter that manages the lifecycle of the file at path.
-func NewJSONLFile(path string) (*JSONLWriter, error) {
+func NewJSONLFile(path string, includeSimilarity bool) (*JSONLWriter, error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("create output file: %w", err)
 	}
 
-	writer := NewJSONLWriter(file)
+	writer := NewJSONLWriter(file, includeSimilarity)
 	writer.closer = file
 	return writer, nil
 }
@@ -77,11 +79,12 @@ func (j *JSONLWriter) WriteHeader(header RunHeader) error {
 // Write appends a result entry to the stream.
 func (j *JSONLWriter) Write(res engine.Result) error {
 	entry := struct {
-		URL       string  `json:"url"`
-		Status    int     `json:"status"`
-		Size      int64   `json:"size"`
-		LatencyMS float64 `json:"latency_ms"`
-		Error     string  `json:"error,omitempty"`
+		URL        string   `json:"url"`
+		Status     int      `json:"status"`
+		Size       int64    `json:"size"`
+		LatencyMS  float64  `json:"latency_ms"`
+		Similarity *float64 `json:"similarity,omitempty"`
+		Error      string   `json:"error,omitempty"`
 	}{
 		URL:    res.URL,
 		Status: res.StatusCode,
@@ -90,6 +93,11 @@ func (j *JSONLWriter) Write(res engine.Result) error {
 
 	if res.Duration > 0 {
 		entry.LatencyMS = float64(res.Duration) / float64(time.Millisecond)
+	}
+
+	if j.includeSimilarity && res.HasSimilarity {
+		similarity := res.Similarity
+		entry.Similarity = &similarity
 	}
 
 	if res.Err != nil {

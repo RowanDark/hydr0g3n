@@ -158,3 +158,20 @@ func TestMatcherBaselineSimilarity(t *testing.T) {
 		t.Fatalf("expected empty body to pass when baseline filtering enabled")
 	}
 }
+
+func TestMatcherEvaluateReportsSimilarity(t *testing.T) {
+	baseline := []byte("baseline response body for comparison")
+	matcher := New(Options{
+		SimilarityThreshold: 0.5,
+		BaselineBody:        baseline,
+	})
+
+	similar := engine.Result{Body: []byte("baseline response body for comparison and extras")}
+	outcome := matcher.Evaluate(similar)
+	if !outcome.HasSimilarity {
+		t.Fatalf("expected similarity metadata")
+	}
+	if outcome.Similarity <= 0 {
+		t.Fatalf("expected positive similarity, got %f", outcome.Similarity)
+	}
+}

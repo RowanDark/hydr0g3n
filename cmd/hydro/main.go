@@ -42,6 +42,7 @@ func main() {
 		followRedirects     = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
 		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
 		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
+		showSimilarity      = flag.Bool("show-similarity", false, "Include similarity scores in output (debug)")
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
 		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
 	)
@@ -236,7 +237,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	prettyWriter := output.NewPrettyWriter(os.Stdout)
+	prettyWriter := output.NewPrettyWriter(os.Stdout, *showSimilarity)
 
 	var (
 		jsonlWriter *output.JSONLWriter
@@ -248,7 +249,7 @@ func main() {
 		format := strings.ToLower(*outputFormat)
 		switch format {
 		case "jsonl", "":
-			jsonlWriter, err = output.NewJSONLFile(*outputPath)
+			jsonlWriter, err = output.NewJSONLFile(*outputPath, *showSimilarity)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
 				os.Exit(1)
@@ -296,7 +297,13 @@ func main() {
 	var runErr error
 
 	for res := range results {
-		matches := resultMatcher.Matches(res)
+		outcome := resultMatcher.Evaluate(res)
+		if outcome.HasSimilarity {
+			res.HasSimilarity = true
+			res.Similarity = outcome.Similarity
+		}
+
+		matches := outcome.Matched
 		if matches {
 			if jsonlWriter != nil {
 				if err := jsonlWriter.Write(res); err != nil && writerErr == nil {
