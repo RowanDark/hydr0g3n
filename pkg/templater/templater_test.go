@@ -69,3 +69,13 @@ func TestExpandBody(t *testing.T) {
 		t.Fatalf("Expand returned %q, want %q", got, want)
 	}
 }
+
+func TestExpandMixedPlaceholders(t *testing.T) {
+	tpl := New()
+
+	got := tpl.Expand("{{FUZZ}}/FUZZ/%s", "payload")
+	want := "payload/payload/payload"
+	if got != want {
+		t.Fatalf("Expand returned %q, want %q", got, want)
+	}
+}
