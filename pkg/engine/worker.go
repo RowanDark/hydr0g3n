@@ -30,6 +30,8 @@ type Result struct {
 	Duration      time.Duration
 	Body          []byte
 	Err           error
+	Similarity    float64
+	HasSimilarity bool
 }
 
 // Config represents the parameters required to execute a fuzzing run.

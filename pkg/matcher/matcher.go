@@ -38,6 +38,13 @@ type Matcher struct {
 	shingleSize int
 }
 
+// MatchOutcome describes the result of evaluating a response against the matcher rules.
+type MatchOutcome struct {
+	Matched       bool
+	Similarity    float64
+	HasSimilarity bool
+}
+
 // New creates a Matcher from the provided options.
 func New(opts Options) Matcher {
 	m := Matcher{size: opts.Size}
@@ -75,44 +82,60 @@ func New(opts Options) Matcher {
 //
 // Errors are always considered matches so they remain visible to the caller.
 func (m Matcher) Matches(res engine.Result) bool {
+	outcome := m.Evaluate(res)
+	return outcome.Matched
+}
+
+// Evaluate determines whether the result passes all configured filters and returns
+// additional metadata produced during evaluation.
+func (m Matcher) Evaluate(res engine.Result) MatchOutcome {
+	outcome := MatchOutcome{Matched: true}
+
 	if res.Err != nil {
-		return true
+		return outcome
 	}
 
 	if m.hasStatus {
 		if _, ok := m.statuses[res.StatusCode]; !ok {
-			return false
+			outcome.Matched = false
+			return outcome
 		}
 	}
 
 	if m.hasSizeAny {
 		size := res.ContentLength
 		if size < 0 {
-			return false
+			outcome.Matched = false
+			return outcome
 		}
 		if m.size.HasMin && size < m.size.Min {
-			return false
+			outcome.Matched = false
+			return outcome
 		}
 		if m.size.HasMax && size > m.size.Max {
-			return false
+			outcome.Matched = false
+			return outcome
 		}
 	}
 
 	if m.hasBaseline && m.threshold > 0 {
 		if len(res.Body) == 0 {
-			return true
+			return outcome
 		}
 		shingles := buildShingles(res.Body, m.shingleSize)
 		if len(shingles) == 0 {
-			return true
+			return outcome
 		}
 		similarity := jaccardSimilarity(m.baseline, shingles)
+		outcome.Similarity = similarity
+		outcome.HasSimilarity = true
 		if similarity >= m.threshold {
-			return false
+			outcome.Matched = false
+			return outcome
 		}
 	}
 
-	return true
+	return outcome
 }
 
 func buildShingles(body []byte, size int) map[string]struct{} {
