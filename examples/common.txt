@@ -1,0 +1,10 @@
+admin
+login
+api
+dashboard
+static
+uploads
+images
+backup
+config
+health
