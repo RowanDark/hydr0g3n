@@ -42,6 +42,7 @@ func main() {
 		followRedirects     = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
 		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
 		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
+		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
 	)
 
 	flag.Usage = func() {
@@ -139,6 +140,9 @@ func main() {
 	if *outputPath != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("output_path=%s", *outputPath))
 	}
+	if *burpExport != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("burp_export=%s", *burpExport))
+	}
 	if *outputFormat != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("output_format=%s", strings.ToLower(*outputFormat)))
 	}
@@ -231,6 +235,7 @@ func main() {
 
 	var (
 		jsonlWriter *output.JSONLWriter
+		burpWriter  *output.BurpWriter
 		writerErr   error
 	)
 
@@ -254,6 +259,19 @@ func main() {
 		}
 	}
 
+	if *burpExport != "" {
+		burpWriter, err = output.NewBurpFile(*burpExport, method)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(1)
+		}
+		defer func() {
+			if closeErr := burpWriter.Close(); closeErr != nil && writerErr == nil {
+				writerErr = closeErr
+			}
+		}()
+	}
+
 	if jsonlWriter != nil {
 		header := output.RunHeader{
 			RunID:     runIdentifier,
@@ -273,14 +291,18 @@ func main() {
 	var runErr error
 
 	for res := range results {
-		if jsonlWriter != nil {
-			if err := jsonlWriter.Write(res); err != nil && writerErr == nil {
-				writerErr = err
-			}
-		}
-
 		matches := resultMatcher.Matches(res)
 		if matches {
+			if jsonlWriter != nil {
+				if err := jsonlWriter.Write(res); err != nil && writerErr == nil {
+					writerErr = err
+				}
+			}
+			if burpWriter != nil && res.Err == nil {
+				if err := burpWriter.Write(res); err != nil && writerErr == nil {
+					writerErr = err
+				}
+			}
 			if runRecorder != nil {
 				if err := runRecorder.RecordHit(ctx, store.HitRecord{
 					Path:          res.URL,
@@ -293,6 +315,12 @@ func main() {
 			}
 
 			if err := prettyWriter.Write(res); err != nil && writerErr == nil {
+				writerErr = err
+			}
+		}
+
+		if !matches && jsonlWriter != nil {
+			if err := jsonlWriter.Write(res); err != nil && writerErr == nil {
 				writerErr = err
 			}
 		}
