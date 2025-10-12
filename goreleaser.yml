@@ -29,6 +29,42 @@ archives:
     files:
       - LICENSE
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+nfpms:
+  - id: hydr0g3n-deb
+    builds:
+      - hydro
+    package_name: hydr0g3n
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Arch }}"
+    maintainer: Hydr0g3n Developers <maintainers@hydr0g3n.dev>
+    description: Toolkit for working with wordlists and credential data
+    homepage: https://github.com/hydr0g3n/hydr0g3n
+    license: MIT
+    bindir: /usr/local/bin
+    formats:
+      - deb
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/hydr0g3n/LICENSE
+        type: doc
+brews:
+  - name: hydr0g3n
+    ids:
+      - hydro
+    homepage: https://github.com/hydr0g3n/hydr0g3n
+    description: Toolkit for working with wordlists and credential data
+    license: MIT
+    repository:
+      owner: hydr0g3n
+      name: homebrew-tap
+      branch: main
+    folder: Formula
+    commit_author:
+      name: hydr0g3n bot
+      email: ci@hydr0g3n.dev
+    install: |
+      bin.install "hydro"
+    test: |
+      system "#{bin}/hydro", "--version"
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 signs:

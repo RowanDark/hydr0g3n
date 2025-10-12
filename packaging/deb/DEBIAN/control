@@ -1,0 +1,8 @@
+Package: hydr0g3n
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: Hydr0g3n Developers <maintainers@hydr0g3n.dev>
+Homepage: https://github.com/hydr0g3n/hydr0g3n
+Description: Toolkit for working with wordlists and credential data
