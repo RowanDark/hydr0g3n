@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"hydr0g3n/pkg/engine"
 )
 
 // Options defines the configuration for matching engine results.
 type Options struct {
-	Statuses []int
-	Size     SizeRange
+	Statuses            []int
+	Size                SizeRange
+	BaselineBody        []byte
+	SimilarityThreshold float64
+	ShingleSize         int
 }
 
 // SizeRange describes optional minimum and maximum bounds for the response size.
@@ -24,10 +28,14 @@ type SizeRange struct {
 
 // Matcher evaluates engine results against a set of matching rules.
 type Matcher struct {
-	statuses   map[int]struct{}
-	hasStatus  bool
-	size       SizeRange
-	hasSizeAny bool
+	statuses    map[int]struct{}
+	hasStatus   bool
+	size        SizeRange
+	hasSizeAny  bool
+	baseline    map[string]struct{}
+	hasBaseline bool
+	threshold   float64
+	shingleSize int
 }
 
 // New creates a Matcher from the provided options.
@@ -42,6 +50,23 @@ func New(opts Options) Matcher {
 	}
 	if opts.Size.HasMin || opts.Size.HasMax {
 		m.hasSizeAny = true
+	}
+	shingleSize := opts.ShingleSize
+	if shingleSize <= 0 {
+		shingleSize = 5
+	}
+	m.shingleSize = shingleSize
+	if opts.SimilarityThreshold > 0 && len(opts.BaselineBody) > 0 {
+		threshold := opts.SimilarityThreshold
+		if threshold > 1 {
+			threshold = 1
+		}
+		baseline := buildShingles(opts.BaselineBody, shingleSize)
+		if len(baseline) > 0 {
+			m.baseline = baseline
+			m.threshold = threshold
+			m.hasBaseline = true
+		}
 	}
 	return m
 }
@@ -73,7 +98,76 @@ func (m Matcher) Matches(res engine.Result) bool {
 		}
 	}
 
+	if m.hasBaseline && m.threshold > 0 {
+		if len(res.Body) == 0 {
+			return true
+		}
+		shingles := buildShingles(res.Body, m.shingleSize)
+		if len(shingles) == 0 {
+			return true
+		}
+		similarity := jaccardSimilarity(m.baseline, shingles)
+		if similarity >= m.threshold {
+			return false
+		}
+	}
+
 	return true
+}
+
+func buildShingles(body []byte, size int) map[string]struct{} {
+	if size <= 0 {
+		size = 1
+	}
+	tokens := tokenize(body)
+	if len(tokens) == 0 {
+		return nil
+	}
+	if len(tokens) < size {
+		size = len(tokens)
+	}
+	if size <= 0 {
+		return nil
+	}
+	shingles := make(map[string]struct{}, len(tokens))
+	for i := 0; i <= len(tokens)-size; i++ {
+		var builder strings.Builder
+		for j := 0; j < size; j++ {
+			if j > 0 {
+				builder.WriteByte(' ')
+			}
+			builder.WriteString(tokens[i+j])
+		}
+		shingles[builder.String()] = struct{}{}
+	}
+	return shingles
+}
+
+func tokenize(body []byte) []string {
+	if len(body) == 0 {
+		return nil
+	}
+	text := strings.ToLower(string(body))
+	return strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+}
+
+func jaccardSimilarity(a, b map[string]struct{}) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	intersection := 0
+	for shingle := range b {
+		if _, ok := a[shingle]; ok {
+			intersection++
+		}
+	}
+	union := len(a) + len(b) - intersection
+	if union <= 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
 }
 
 // ParseStatusList converts a comma-separated list of HTTP status codes into integers.

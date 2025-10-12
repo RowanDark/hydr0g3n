@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,28 +14,32 @@ import (
 	"time"
 
 	"hydr0g3n/pkg/engine"
+	"hydr0g3n/pkg/httpclient"
 	"hydr0g3n/pkg/matcher"
 	"hydr0g3n/pkg/output"
 	"hydr0g3n/pkg/store"
+	"hydr0g3n/pkg/templater"
 )
 
 func main() {
 	const binaryName = "hydro"
 
 	var (
-		targetURL       = flag.String("u", "", "Target URL or template (required)")
-		wordlist        = flag.String("w", "", "Path to the wordlist file (required)")
-		concurrency     = flag.Int("concurrency", 10, "Number of concurrent workers")
-		timeout         = flag.Duration("timeout", 10*time.Second, "Request timeout duration")
-		outputPath      = flag.String("output", "", "Path to write output results")
-		outputFormat    = flag.String("output-format", "jsonl", "Format for --output (jsonl)")
-		beginner        = flag.Bool("beginner", false, "Enable beginner-friendly defaults")
-		profile         = flag.String("profile", "", "Named execution profile to load")
-		matchStatus     = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
-		filterSize      = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
-		resumePath      = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
-		methodFlag      = flag.String("method", http.MethodHead, "HTTP method to use for requests (GET, HEAD, POST)")
-		followRedirects = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
+		targetURL           = flag.String("u", "", "Target URL or template (required)")
+		wordlist            = flag.String("w", "", "Path to the wordlist file (required)")
+		concurrency         = flag.Int("concurrency", 10, "Number of concurrent workers")
+		timeout             = flag.Duration("timeout", 10*time.Second, "Request timeout duration")
+		outputPath          = flag.String("output", "", "Path to write output results")
+		outputFormat        = flag.String("output-format", "jsonl", "Format for --output (jsonl)")
+		beginner            = flag.Bool("beginner", false, "Enable beginner-friendly defaults")
+		profile             = flag.String("profile", "", "Named execution profile to load")
+		matchStatus         = flag.String("match-status", "", "Comma-separated list of HTTP status codes to include in hits")
+		filterSize          = flag.String("filter-size", "", "Filter visible hits by response size range (min-max bytes)")
+		resumePath          = flag.String("resume", "", "Path to a SQLite database for resuming and recording runs")
+		methodFlag          = flag.String("method", http.MethodHead, "HTTP method to use for requests (GET, HEAD, POST)")
+		followRedirects     = flag.Bool("follow-redirects", false, "Follow HTTP redirects (up to 5 hops)")
+		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
+		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
 	)
 
 	flag.Usage = func() {
@@ -77,14 +84,34 @@ func main() {
 		os.Exit(2)
 	}
 
-	resultMatcher := matcher.New(matcher.Options{Statuses: statuses, Size: sizeRange})
+	if *similarityThreshold < 0 || *similarityThreshold > 1 {
+		fmt.Fprintf(os.Stderr, "%s: --similarity-threshold must be between 0 and 1\n", binaryName)
+		os.Exit(2)
+	}
+
+	ctx := context.Background()
+
+	var baselineBody []byte
+	if !*noBaseline {
+		capturedBaseline, err := captureBaseline(ctx, *targetURL, *timeout, *followRedirects)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: baseline request failed: %v\n", binaryName, err)
+		} else {
+			baselineBody = capturedBaseline
+		}
+	}
+
+	resultMatcher := matcher.New(matcher.Options{
+		Statuses:            statuses,
+		Size:                sizeRange,
+		BaselineBody:        baselineBody,
+		SimilarityThreshold: *similarityThreshold,
+	})
 
 	selectedProfile := *profile
 	if *beginner {
 		selectedProfile = "beginner"
 	}
-
-	ctx := context.Background()
 
 	binaryBase := filepath.Base(os.Args[0])
 
@@ -216,4 +243,40 @@ func exitWithUsage(message string) {
 	fmt.Fprintf(os.Stderr, "Error: %s\n\n", message)
 	flag.Usage()
 	os.Exit(2)
+}
+
+func captureBaseline(ctx context.Context, target string, timeout time.Duration, followRedirects bool) ([]byte, error) {
+	client := httpclient.New(timeout, followRedirects)
+	tpl := templater.New()
+	url := tpl.Expand(target, randomToken())
+
+	reqCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		reqCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	resp, err := client.Request(reqCtx, http.MethodGet, url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	const maxBaselineBytes = 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBaselineBytes))
+	if err != nil {
+		return nil, err
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return body, nil
+}
+
+func randomToken() string {
+	var buf [16]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("baseline-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf[:])
 }

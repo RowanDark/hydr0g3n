@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -22,6 +23,7 @@ type Result struct {
 	StatusCode    int
 	ContentLength int64
 	Duration      time.Duration
+	Body          []byte
 	Err           error
 }
 
@@ -180,6 +182,16 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 
 	result.StatusCode = resp.StatusCode
 	result.ContentLength = resp.ContentLength
+
+	const maxBodyBytes = 1024 * 1024
+	reader := io.LimitReader(resp.Body, maxBodyBytes)
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	result.Body = body
 
 	return result
 }
