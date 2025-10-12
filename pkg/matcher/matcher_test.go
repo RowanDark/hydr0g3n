@@ -175,3 +175,54 @@ func TestMatcherEvaluateReportsSimilarity(t *testing.T) {
 		t.Fatalf("expected positive similarity, got %f", outcome.Similarity)
 	}
 }
+
+func TestMatcherEvaluateStatusAndSize(t *testing.T) {
+	matcher := New(Options{
+		Statuses: []int{200, 204},
+		Size: SizeRange{
+			Min:    10,
+			Max:    50,
+			HasMin: true,
+			HasMax: true,
+		},
+	})
+
+	tests := []struct {
+		name    string
+		result  engine.Result
+		matched bool
+	}{
+		{name: "match", result: engine.Result{StatusCode: 200, ContentLength: 25}, matched: true},
+		{name: "status mismatch", result: engine.Result{StatusCode: 500, ContentLength: 25}, matched: false},
+		{name: "below minimum", result: engine.Result{StatusCode: 200, ContentLength: 5}, matched: false},
+		{name: "above maximum", result: engine.Result{StatusCode: 200, ContentLength: 200}, matched: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outcome := matcher.Evaluate(tt.result)
+			if outcome.Matched != tt.matched {
+				t.Fatalf("matched=%v want %v", outcome.Matched, tt.matched)
+			}
+			if outcome.HasSimilarity {
+				t.Fatalf("expected no similarity metadata for status/size only matcher")
+			}
+		})
+	}
+}
+
+func TestJaccardSimilarity(t *testing.T) {
+	baseline := buildShingles([]byte("this is a sample baseline response"), 2)
+	similar := buildShingles([]byte("this is a sample baseline response with extras"), 2)
+	different := buildShingles([]byte("completely unrelated content"), 2)
+
+	sim := jaccardSimilarity(baseline, similar)
+	if sim <= 0 {
+		t.Fatalf("expected positive similarity, got %f", sim)
+	}
+
+	diff := jaccardSimilarity(baseline, different)
+	if diff != 0 {
+		t.Fatalf("expected zero similarity, got %f", diff)
+	}
+}
