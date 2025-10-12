@@ -13,6 +13,12 @@ type Client struct {
 	client *http.Client
 }
 
+// RequestOptions customises individual HTTP requests issued by the client.
+type RequestOptions struct {
+	Headers http.Header
+	Cookie  string
+}
+
 // New creates a Client configured with the provided timeout. It reuses a
 // single http.Transport to allow connection pooling across concurrent
 // requests.
@@ -52,11 +58,11 @@ func New(timeout time.Duration, followRedirects bool) *Client {
 
 // Head issues an HTTP HEAD request using the shared client.
 func (c *Client) Head(ctx context.Context, url string) (*http.Response, error) {
-	return c.Request(ctx, http.MethodHead, url)
+	return c.Request(ctx, http.MethodHead, url, nil)
 }
 
 // Request issues an HTTP request using the provided method.
-func (c *Client) Request(ctx context.Context, method, url string) (*http.Response, error) {
+func (c *Client) Request(ctx context.Context, method, url string, opts *RequestOptions) (*http.Response, error) {
 	if method == "" {
 		method = http.MethodHead
 	}
@@ -64,6 +70,21 @@ func (c *Client) Request(ctx context.Context, method, url string) (*http.Respons
 	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if opts != nil {
+		for key, values := range opts.Headers {
+			if key == "" {
+				continue
+			}
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+
+		if opts.Cookie != "" {
+			req.Header.Set("Cookie", opts.Cookie)
+		}
 	}
 
 	resp, err := c.client.Do(req)
