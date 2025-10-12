@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"hydr0g3n/pkg/httpclient"
+	"hydr0g3n/pkg/store"
 	"hydr0g3n/pkg/templater"
 )
 
@@ -33,6 +34,7 @@ type Config struct {
 	Profile     string
 	Beginner    bool
 	BinaryName  string
+	RunRecorder *store.Run
 }
 
 // Run starts the fuzzing engine with the provided configuration. It launches a
@@ -68,6 +70,8 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 
 	tpl := templater.New()
 
+	runRecorder := cfg.RunRecorder
+
 	go func() {
 		defer close(jobs)
 		defer file.Close()
@@ -80,6 +84,22 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 			}
 
 			url := tpl.Expand(cfg.URL, word)
+
+			if runRecorder != nil {
+				inserted, err := runRecorder.MarkAttempt(ctx, url)
+				if err != nil {
+					select {
+					case <-ctx.Done():
+						return
+					case results <- Result{URL: url, Err: fmt.Errorf("record attempt: %w", err)}:
+					}
+					continue
+				}
+
+				if !inserted {
+					continue
+				}
+			}
 
 			select {
 			case <-ctx.Done():
