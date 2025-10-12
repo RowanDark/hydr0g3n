@@ -1,0 +1,15 @@
+admin
+login
+index
+robots.txt
+api
+uploads
+images
+js
+css
+phpinfo.php
+backup
+test
+config
+portal
+private

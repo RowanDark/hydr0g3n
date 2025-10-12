@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"hydr0g3n/pkg/httpclient"
@@ -36,6 +38,7 @@ type Config struct {
 	OutputPath      string
 	Profile         string
 	Beginner        bool
+	Quick           bool
 	BinaryName      string
 	RunRecorder     *store.Run
 	Method          string
@@ -64,12 +67,12 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 		timeout = 10 * time.Second
 	}
 
-	file, err := os.Open(cfg.Wordlist)
-	if err != nil {
+	if file, err := os.Open(cfg.Wordlist); err != nil {
 		return nil, fmt.Errorf("open wordlist: %w", err)
+	} else {
+		file.Close()
 	}
 
-	jobs := make(chan string)
 	results := make(chan Result)
 	method := strings.ToUpper(cfg.Method)
 	if method == "" {
@@ -82,80 +85,45 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 
 	runRecorder := cfg.RunRecorder
 
-	go func() {
-		defer close(jobs)
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			word := strings.TrimSpace(scanner.Text())
-			if word == "" {
-				continue
-			}
-
-			url := tpl.Expand(cfg.URL, word)
-
-			if runRecorder != nil {
-				inserted, err := runRecorder.MarkAttempt(ctx, url)
-				if err != nil {
-					select {
-					case <-ctx.Done():
-						return
-					case results <- Result{URL: url, Err: fmt.Errorf("record attempt: %w", err)}:
-					}
-					continue
-				}
-
-				if !inserted {
-					continue
-				}
-			}
-
-			select {
-			case <-ctx.Done():
-				return
-			case jobs <- url:
-			}
+	quickEnabled := cfg.Quick || cfg.Beginner
+	quickWordlist := ""
+	if quickEnabled {
+		quickWordlist = locateQuickWordlist(cfg.Wordlist)
+		if quickWordlist == "" {
+			quickEnabled = false
 		}
-
-		if err := scanner.Err(); err != nil {
-			select {
-			case <-ctx.Done():
-			case results <- Result{Err: fmt.Errorf("read wordlist: %w", err)}:
-			}
-		}
-	}()
-
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
-	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case url, ok := <-jobs:
-					if !ok {
-						return
-					}
-
-					res := executeRequest(ctx, client, url, timeout, method)
-
-					select {
-					case <-ctx.Done():
-						return
-					case results <- res:
-					}
-				}
-			}
-		}()
 	}
 
 	go func() {
-		wg.Wait()
-		close(results)
+		defer close(results)
+
+		runner := stageRunner{
+			ctx:         ctx,
+			target:      cfg.URL,
+			concurrency: concurrency,
+			timeout:     timeout,
+			method:      method,
+			client:      client,
+			tpl:         tpl,
+			runRecorder: runRecorder,
+			results:     results,
+		}
+
+		if quickEnabled {
+			positive, err := runner.run(quickWordlist)
+			if err != nil {
+				runner.emit(Result{Err: err})
+				return
+			}
+
+			if !positive {
+				return
+			}
+		}
+
+		if _, err := runner.run(cfg.Wordlist); err != nil {
+			runner.emit(Result{Err: err})
+		}
 	}()
 
 	return results, nil
@@ -194,4 +162,169 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 	result.Body = body
 
 	return result
+}
+
+type stageRunner struct {
+	ctx         context.Context
+	target      string
+	concurrency int
+	timeout     time.Duration
+	method      string
+	client      *httpclient.Client
+	tpl         *templater.Templater
+	runRecorder *store.Run
+	results     chan<- Result
+}
+
+func (r *stageRunner) run(wordlistPath string) (bool, error) {
+	file, err := os.Open(wordlistPath)
+	if err != nil {
+		return false, fmt.Errorf("open wordlist: %w", err)
+	}
+	defer file.Close()
+
+	jobs := make(chan string)
+	var wg sync.WaitGroup
+	var positive atomic.Bool
+
+	worker := func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case <-r.ctx.Done():
+				return
+			case url, ok := <-jobs:
+				if !ok {
+					return
+				}
+
+				res := executeRequest(r.ctx, r.client, url, r.timeout, r.method)
+
+				if res.Err == nil && isQuickPositive(res.StatusCode) {
+					positive.Store(true)
+				}
+
+				if !r.emit(res) {
+					return
+				}
+			}
+		}
+	}
+
+	wg.Add(r.concurrency)
+	for i := 0; i < r.concurrency; i++ {
+		go worker()
+	}
+
+	scanner := bufio.NewScanner(file)
+	stop := false
+
+	for scanner.Scan() {
+		if r.ctx.Err() != nil {
+			stop = true
+			break
+		}
+
+		word := strings.TrimSpace(scanner.Text())
+		if word == "" {
+			continue
+		}
+
+		url := r.tpl.Expand(r.target, word)
+
+		if r.runRecorder != nil {
+			inserted, err := r.runRecorder.MarkAttempt(r.ctx, url)
+			if err != nil {
+				if !r.emit(Result{URL: url, Err: fmt.Errorf("record attempt: %w", err)}) {
+					stop = true
+					break
+				}
+				continue
+			}
+
+			if !inserted {
+				continue
+			}
+		}
+
+		if !r.enqueue(jobs, url) {
+			stop = true
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil && !stop {
+		r.emit(Result{Err: fmt.Errorf("read wordlist: %w", err)})
+	}
+
+	close(jobs)
+	wg.Wait()
+
+	return positive.Load(), nil
+}
+
+func (r *stageRunner) emit(res Result) bool {
+	select {
+	case <-r.ctx.Done():
+		return false
+	case r.results <- res:
+		return true
+	}
+}
+
+func (r *stageRunner) enqueue(jobs chan<- string, url string) bool {
+	select {
+	case <-r.ctx.Done():
+		return false
+	case jobs <- url:
+		return true
+	}
+}
+
+func locateQuickWordlist(primary string) string {
+	candidates := []string{}
+
+	if primary != "" {
+		dir := filepath.Dir(primary)
+		if dir == "." || dir == "" {
+			candidates = append(candidates, "sample_small.txt")
+		} else {
+			candidates = append(candidates, filepath.Join(dir, "sample_small.txt"))
+		}
+	}
+
+	candidates = append(candidates, filepath.Join("wordlists", "sample_small.txt"))
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+
+		return candidate
+	}
+
+	return ""
+}
+
+func isQuickPositive(status int) bool {
+	if status == 0 {
+		return false
+	}
+
+	if status >= 200 && status < 400 {
+		return true
+	}
+
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusMethodNotAllowed:
+		return true
+	default:
+		return false
+	}
 }
