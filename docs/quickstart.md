@@ -22,7 +22,7 @@ Welcome to **hydro**, a fast content-discovery tool designed to help you enumera
    ```bash
    ./hydro --beginner -u https://example.com -w examples/sample_small.txt
    ```
-4. **Review the output.** Hits are printed as JSON lines by default. Each line includes the path, status code, and response size.
+4. **Review the output.** Hits are printed as JSON lines by default. Each line includes the path, status code, and response size. When watching the run in your terminal, switch to a hierarchical tree with `--view tree` and control ANSI colors with `--color-mode` (`auto`, `always`, `never`) plus `--color-preset` (`default`, `protanopia`, `tritanopia`, `blue-light`).
 5. **Adjust scope.** Swap in a larger list (for example [`examples/common.txt`](../examples/common.txt)) or point at templated URLs like `https://example.com/blog/FUZZ`.
 6. **Iterate safely.** Tweak concurrency and timeouts gradually, watching for rate limits or defensive responses from the target.
 
@@ -57,6 +57,10 @@ The commands below progress from basic to advanced usage. Feel free to copy them
 7. **Similarity-aware fuzzing with GET requests:**
    ```bash
    ./hydro -u https://intranet.example.com/FUZZ -w examples/common.txt --method GET --similarity-threshold 0.4 --show-similarity
+   ```
+8. **Tree view with a colorblind-friendly palette:**
+   ```bash
+   ./hydro -u https://portal.example.com/FUZZ -w examples/common.txt --view tree --color-mode always --color-preset protanopia
    ```
 
 ## Understanding `HEAD` vs `GET`
