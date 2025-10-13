@@ -28,6 +28,8 @@ archives:
         format: zip
     files:
       - LICENSE
+      - completions/*
+      - man/hydro.1
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 nfpms:
   - id: hydr0g3n-deb
@@ -46,6 +48,15 @@ nfpms:
       - src: LICENSE
         dst: /usr/share/doc/hydr0g3n/LICENSE
         type: doc
+      - src: man/hydro.1
+        dst: /usr/share/man/man1/hydro.1
+        type: doc
+      - src: completions/hydro.bash
+        dst: /usr/share/bash-completion/completions/hydro
+      - src: completions/hydro.zsh
+        dst: /usr/share/zsh/vendor-completions/_hydro
+      - src: completions/hydro.fish
+        dst: /usr/share/fish/vendor_completions.d/hydro.fish
 brews:
   - name: hydr0g3n
     ids:

@@ -45,6 +45,7 @@ func main() {
 		showSimilarity      = flag.Bool("show-similarity", false, "Include similarity scores in output (debug)")
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
 		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
+		completionScript    = flag.String("completion-script", "", "Print shell completion script for the specified shell (bash, zsh, fish)")
 	)
 
 	flag.Usage = func() {
@@ -53,9 +54,18 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintln(flag.CommandLine.Output(), "\nExamples:")
 		fmt.Fprintf(flag.CommandLine.Output(), "  %s --beginner -u https://example.com -w wordlists/common.txt\n", binaryName)
+		fmt.Fprintln(flag.CommandLine.Output(), "\nFor detailed usage, install the man page and run: man hydro")
 	}
 
 	flag.Parse()
+
+	if script := strings.TrimSpace(*completionScript); script != "" {
+		if err := outputCompletionScript(os.Stdout, script); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(2)
+		}
+		return
+	}
 
 	if *targetURL == "" {
 		exitWithUsage("a target URL must be provided with -u")

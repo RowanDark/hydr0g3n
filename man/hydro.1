@@ -1,0 +1,112 @@
+.TH HYDRO 1 "May 2024" "hydr0g3n" "User Commands"
+.SH NAME
+hydro \- fast HTTP content discovery and templated wordlist execution
+.SH SYNOPSIS
+.B hydro
+\-u
+.I target
+\-w
+.I wordlist
+[
+.I options
+]
+.SH DESCRIPTION
+.B hydro
+is the command line interface for the hydr0g3n toolkit. It performs high-
+concurrency HTTP requests using templated wordlists, configurable matchers,
+and multiple output formats. The tool is designed to help penetration testers
+and developers discover hidden content or verify wordlist based workflows.
+.PP
+The default behaviour issues HEAD requests against the provided target URL.
+Request concurrency, HTTP method, matching rules, and output destinations can
+all be tuned via command line flags or configuration profiles. A deterministic
+run identifier is calculated from the runtime configuration to make resumable
+scans and result comparison straightforward.
+.SH OPTIONS
+.TP
+.BR -u ", " --u "=""
+Target URL or template to probe (required).
+.TP
+.BR -w ", " --w "=""
+Path to the wordlist file to execute (required).
+.TP
+.BR --concurrency "="
+Number of concurrent HTTP workers (default: 10).
+.TP
+.BR --timeout "="
+Request timeout duration (default: 10s).
+.TP
+.BR --output "="
+Write results to the provided file path. Defaults to stdout when unset.
+.TP
+.BR --output-format "="
+Select the format written to
+.BR --output
+(default: jsonl).
+.TP
+.BR --beginner
+Enable beginner-friendly defaults such as GET requests and built-in filters.
+.TP
+.BR --profile "="
+Load named execution profile values from configuration.
+.TP
+.BR --match-status "="
+Comma separated list of HTTP status codes to include in output hits.
+.TP
+.BR --filter-size "="
+Filter visible hits by response size range in bytes (min-max).
+.TP
+.BR --resume "="
+Use the provided SQLite database file for resumable scanning.
+.TP
+.BR --method "="
+Override the HTTP method for requests. Supports GET, HEAD, and POST.
+.TP
+.BR --follow-redirects
+Follow HTTP redirects (up to 5 hops) when evaluating matches.
+.TP
+.BR --similarity-threshold "="
+Hide responses whose bodies are at least this similar to the baseline (0-1).
+.TP
+.BR --no-baseline
+Disable the automatic baseline request used for similarity filtering.
+.TP
+.BR --show-similarity
+Include similarity scores in the JSON output for debugging.
+.TP
+.BR --burp-export "="
+Write matched requests and responses to a Burp-compatible XML file.
+.TP
+.BR --pre-hook "="
+Execute a shell command prior to scanning to fetch authentication headers.
+.TP
+.BR --completion-script "="
+Print a shell completion script for
+.B bash
+,
+.B zsh
+, or
+.B fish
+and exit.
+.SH EXAMPLES
+.TP
+Beginner preset with automatic configuration
+.EX
+$ hydro --beginner -u https://example.com -w wordlists/common.txt
+.EE
+.TP
+Resume a long running scan and write JSONL output to disk
+.EX
+$ hydro -u https://example.com/{FUZZ} -w wordlists/dirs.txt \
+    --resume runs/example.db --output results.jsonl
+.EE
+.SH FILES
+.TP
+.I completions/
+Generated shell completion scripts for bash, zsh, and fish.
+.TP
+.I scripts/generate-completions.sh
+Helper script that regenerates the completion files from the binary.
+.SH SEE ALSO
+.BR man (1),
+.BR jq (1)
