@@ -43,6 +43,9 @@ func main() {
 		similarityThreshold = flag.Float64("similarity-threshold", 0.6, "Hide hits whose bodies are this similar to the baseline (0-1)")
 		noBaseline          = flag.Bool("no-baseline", false, "Disable the automatic baseline request used for similarity filtering")
 		showSimilarity      = flag.Bool("show-similarity", false, "Include similarity scores in output (debug)")
+		viewModeFlag        = flag.String("view", "table", "Pretty output layout (table, tree)")
+		colorModeFlag       = flag.String("color-mode", "auto", "Color output mode (auto, always, never)")
+		colorPresetFlag     = flag.String("color-preset", "default", "Color palette for pretty output (default, protanopia, tritanopia, blue-light)")
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
 		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
 		completionScript    = flag.String("completion-script", "", "Print shell completion script for the specified shell (bash, zsh, fish)")
@@ -58,6 +61,24 @@ func main() {
 	}
 
 	flag.Parse()
+
+	viewMode, err := output.ParseViewMode(*viewModeFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+		os.Exit(2)
+	}
+
+	colorMode, err := output.ParseColorMode(*colorModeFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+		os.Exit(2)
+	}
+
+	colorPreset, err := output.ParseColorPreset(*colorPresetFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+		os.Exit(2)
+	}
 
 	if script := strings.TrimSpace(*completionScript); script != "" {
 		if err := outputCompletionScript(os.Stdout, script); err != nil {
@@ -167,6 +188,15 @@ func main() {
 	if selectedProfile != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("profile=%s", selectedProfile))
 	}
+	if viewValue := strings.ToLower(strings.TrimSpace(*viewModeFlag)); viewValue != "" && viewValue != "table" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("view=%s", viewValue))
+	}
+	if modeValue := strings.ToLower(strings.TrimSpace(*colorModeFlag)); modeValue != "" && modeValue != "auto" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("color_mode=%s", modeValue))
+	}
+	if presetValue := strings.ToLower(strings.TrimSpace(*colorPresetFlag)); presetValue != "" && presetValue != "default" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("color_preset=%s", presetValue))
+	}
 
 	if prof, ok := config.LookupProfile(selectedProfile); ok {
 		runConfigEntries = append(runConfigEntries, prof.RunHashConfig()...)
@@ -247,7 +277,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	prettyWriter := output.NewPrettyWriter(os.Stdout, *showSimilarity)
+	prettyWriter := output.NewPrettyWriter(os.Stdout, output.PrettyOptions{
+		ShowSimilarity: *showSimilarity,
+		ViewMode:       viewMode,
+		ColorMode:      colorMode,
+		ColorPreset:    colorPreset,
+		TargetURL:      strings.TrimSpace(*targetURL),
+	})
 
 	var (
 		jsonlWriter *output.JSONLWriter
@@ -350,6 +386,10 @@ func main() {
 		if res.Err != nil && runErr == nil {
 			runErr = res.Err
 		}
+	}
+
+	if err := prettyWriter.Flush(); err != nil && writerErr == nil {
+		writerErr = err
 	}
 
 	if writerErr != nil {
