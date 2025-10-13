@@ -49,6 +49,8 @@ func main() {
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
 		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
 		completionScript    = flag.String("completion-script", "", "Print shell completion script for the specified shell (bash, zsh, fish)")
+		dryRun              = flag.Bool("dry-run", false, "Display planned permutations without sending any requests")
+		progressFile        = flag.String("progress-file", "", "Path to store progress checkpoints for resuming runs")
 	)
 
 	flag.Usage = func() {
@@ -128,7 +130,7 @@ func main() {
 	ctx := context.Background()
 
 	var baselineBody []byte
-	if !*noBaseline {
+	if !*noBaseline && !*dryRun {
 		capturedBaseline, err := captureBaseline(ctx, *targetURL, *timeout, *followRedirects)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: baseline request failed: %v\n", binaryName, err)
@@ -136,13 +138,6 @@ func main() {
 			baselineBody = capturedBaseline
 		}
 	}
-
-	resultMatcher := matcher.New(matcher.Options{
-		Statuses:            statuses,
-		Size:                sizeRange,
-		BaselineBody:        baselineBody,
-		SimilarityThreshold: *similarityThreshold,
-	})
 
 	selectedProfile := *profile
 	if *beginner {
@@ -181,6 +176,9 @@ func main() {
 	}
 	if *resumePath != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("resume_db=%s", *resumePath))
+	}
+	if trimmed := strings.TrimSpace(*progressFile); trimmed != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("progress_file=%s", trimmed))
 	}
 	if strings.TrimSpace(*preHook) != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("pre_hook=%s", strings.TrimSpace(*preHook)))
@@ -231,6 +229,54 @@ func main() {
 		runRecorder *store.Run
 	)
 
+	cfg := engine.Config{
+		URL:             *targetURL,
+		Wordlist:        *wordlist,
+		Concurrency:     *concurrency,
+		Timeout:         *timeout,
+		OutputPath:      *outputPath,
+		Profile:         selectedProfile,
+		Beginner:        *beginner,
+		BinaryName:      binaryBase,
+		RunRecorder:     runRecorder,
+		Method:          method,
+		FollowRedirects: *followRedirects,
+		PreHook:         strings.TrimSpace(*preHook),
+		ProgressFile:    strings.TrimSpace(*progressFile),
+	}
+
+	if *dryRun {
+		plan, err := engine.Plan(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: dry run failed: %v\n", binaryName, err)
+			os.Exit(1)
+		}
+
+		fmt.Fprintf(os.Stdout, "Dry run: %d permutations", plan.TotalPermutations)
+		if plan.QuickPermutations > 0 {
+			fmt.Fprintf(os.Stdout, " (%d quick, %d primary)", plan.QuickPermutations, plan.PrimaryPermutations)
+		}
+		fmt.Fprintln(os.Stdout)
+
+		if len(plan.Samples) > 0 {
+			fmt.Fprintln(os.Stdout, "Samples:")
+			for _, sample := range plan.Samples {
+				fmt.Fprintf(os.Stdout, "  %s %s\n", method, sample)
+			}
+		} else {
+			fmt.Fprintln(os.Stdout, "(no permutations generated)")
+		}
+
+		return
+	}
+
+	resultMatcher := matcher.New(matcher.Options{
+		Statuses:            statuses,
+		Size:                sizeRange,
+		BaselineBody:        baselineBody,
+		SimilarityThreshold: *similarityThreshold,
+	})
+
 	if *resumePath != "" {
 		var err error
 		resumeDB, err = store.OpenSQLite(*resumePath)
@@ -256,20 +302,7 @@ func main() {
 		}
 	}
 
-	cfg := engine.Config{
-		URL:             *targetURL,
-		Wordlist:        *wordlist,
-		Concurrency:     *concurrency,
-		Timeout:         *timeout,
-		OutputPath:      *outputPath,
-		Profile:         selectedProfile,
-		Beginner:        *beginner,
-		BinaryName:      binaryBase,
-		RunRecorder:     runRecorder,
-		Method:          method,
-		FollowRedirects: *followRedirects,
-		PreHook:         strings.TrimSpace(*preHook),
-	}
+	cfg.RunRecorder = runRecorder
 
 	results, err := engine.Run(ctx, cfg)
 	if err != nil {

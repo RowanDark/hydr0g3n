@@ -49,7 +49,108 @@ type Config struct {
 	Method          string
 	FollowRedirects bool
 	PreHook         string
+	ProgressFile    string
 }
+
+// PlanSummary describes the permutations that would be executed for a given
+// configuration without issuing any network requests.
+type PlanSummary struct {
+	QuickPermutations   int
+	PrimaryPermutations int
+	TotalPermutations   int
+	Samples             []string
+}
+
+const planSampleLimit = 10
+
+// Plan enumerates the permutations for the provided configuration and returns
+// a summary containing counts and representative samples.
+func Plan(cfg Config) (*PlanSummary, error) {
+	if cfg.URL == "" {
+		return nil, errors.New("target URL is required")
+	}
+
+	if cfg.Wordlist == "" {
+		return nil, errors.New("wordlist path is required")
+	}
+
+	tpl := templater.New()
+	samples := make([]string, 0, planSampleLimit)
+	addSample := func(url string) {
+		if len(samples) < planSampleLimit {
+			samples = append(samples, url)
+		}
+	}
+
+	summary := &PlanSummary{}
+
+	quickEnabled := cfg.Quick || cfg.Beginner
+	quickWordlist := ""
+	if quickEnabled {
+		quickWordlist = locateQuickWordlist(cfg.Wordlist)
+		if quickWordlist == "" {
+			quickEnabled = false
+		}
+	}
+
+	if quickEnabled {
+		count, err := countWordlistPermutations(quickWordlist, cfg.URL, tpl, addSample)
+		if err != nil {
+			return nil, err
+		}
+		summary.QuickPermutations = count
+		summary.TotalPermutations += count
+	}
+
+	primaryCount, err := countWordlistPermutations(cfg.Wordlist, cfg.URL, tpl, addSample)
+	if err != nil {
+		return nil, err
+	}
+
+	summary.PrimaryPermutations = primaryCount
+	summary.TotalPermutations += primaryCount
+	summary.Samples = samples
+
+	return summary, nil
+}
+
+func countWordlistPermutations(path, target string, tpl *templater.Templater, addSample func(string)) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, fmt.Errorf("open wordlist: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	total := 0
+
+	for scanner.Scan() {
+		word := strings.TrimSpace(scanner.Text())
+		if word == "" {
+			continue
+		}
+
+		payloads := tpl.ExpandPayload(word)
+		for _, payload := range payloads {
+			total++
+			if addSample != nil {
+				addSample(tpl.Expand(target, payload))
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("read wordlist: %w", err)
+	}
+
+	return total, nil
+}
+
+const (
+	progressStageQuick    = "quick"
+	progressStagePrimary  = "primary"
+	progressStageComplete = "complete"
+)
 
 // Run starts the fuzzing engine with the provided configuration. It launches a
 // worker pool that performs concurrent HTTP requests using the configured method. The caller receives a
@@ -91,6 +192,11 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 
 	runRecorder := cfg.RunRecorder
 
+	progressTracker, err := newProgressTracker(strings.TrimSpace(cfg.ProgressFile))
+	if err != nil {
+		return nil, err
+	}
+
 	quickEnabled := cfg.Quick || cfg.Beginner
 	quickWordlist := ""
 	if quickEnabled {
@@ -119,10 +225,11 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 			runRecorder: runRecorder,
 			results:     results,
 			requestOpts: requestOpts,
+			progress:    progressTracker,
 		}
 
 		if quickEnabled {
-			positive, err := runner.run(quickWordlist)
+			positive, err := runner.run(progressStageQuick, quickWordlist, progressStagePrimary, progressStageComplete)
 			if err != nil {
 				runner.emit(Result{Err: err})
 				return
@@ -133,7 +240,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 			}
 		}
 
-		if _, err := runner.run(cfg.Wordlist); err != nil {
+		if _, err := runner.run(progressStagePrimary, cfg.Wordlist, progressStageComplete, progressStageComplete); err != nil {
 			runner.emit(Result{Err: err})
 		}
 	}()
@@ -187,9 +294,26 @@ type stageRunner struct {
 	runRecorder *store.Run
 	results     chan<- Result
 	requestOpts *httpclient.RequestOptions
+	progress    *progressTracker
 }
 
-func (r *stageRunner) run(wordlistPath string) (bool, error) {
+func (r *stageRunner) run(stage string, wordlistPath string, nextStageOnSuccess, nextStageOnFailure string) (bool, error) {
+	if r.progress != nil {
+		if err := r.progress.EnsureStage(stage); err != nil {
+			return false, err
+		}
+
+		if r.progress.StageCompleted(stage) {
+			if stage == progressStageQuick {
+				state := r.progress.State()
+				if state.Stage == progressStagePrimary {
+					return true, nil
+				}
+			}
+			return false, nil
+		}
+	}
+
 	file, err := os.Open(wordlistPath)
 	if err != nil {
 		return false, fmt.Errorf("open wordlist: %w", err)
@@ -232,6 +356,7 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 
 	scanner := bufio.NewScanner(file)
 	stop := false
+	wordIndex := 0
 
 	for scanner.Scan() {
 		if r.ctx.Err() != nil {
@@ -245,8 +370,19 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 		}
 
 		payloads := r.tpl.ExpandPayload(word)
-		for _, payload := range payloads {
+		for variantIndex, payload := range payloads {
+			if r.progress != nil && !r.progress.Allow(stage, wordIndex, variantIndex) {
+				continue
+			}
+
 			url := r.tpl.Expand(r.target, payload)
+
+			nextWord := wordIndex
+			nextVariant := variantIndex + 1
+			if nextVariant >= len(payloads) {
+				nextWord = wordIndex + 1
+				nextVariant = 0
+			}
 
 			if r.runRecorder != nil {
 				inserted, err := r.runRecorder.MarkAttempt(r.ctx, url)
@@ -259,6 +395,10 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 				}
 
 				if !inserted {
+					if !r.updateProgress(stage, nextWord, nextVariant, url) {
+						stop = true
+						break
+					}
 					continue
 				}
 			}
@@ -267,11 +407,18 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 				stop = true
 				break
 			}
+
+			if !r.updateProgress(stage, nextWord, nextVariant, url) {
+				stop = true
+				break
+			}
 		}
 
 		if stop {
 			break
 		}
+
+		wordIndex++
 	}
 
 	if err := scanner.Err(); err != nil && !stop {
@@ -281,7 +428,23 @@ func (r *stageRunner) run(wordlistPath string) (bool, error) {
 	close(jobs)
 	wg.Wait()
 
-	return positive.Load(), nil
+	completed := !stop
+	positiveResult := positive.Load()
+
+	if completed && r.progress != nil {
+		nextStage := nextStageOnFailure
+		if positiveResult {
+			nextStage = nextStageOnSuccess
+		}
+
+		if nextStage != "" {
+			if err := r.progress.Set(nextStage, 0, 0); err != nil {
+				return positiveResult, err
+			}
+		}
+	}
+
+	return positiveResult, nil
 }
 
 func (r *stageRunner) emit(res Result) bool {
@@ -299,6 +462,217 @@ func (r *stageRunner) enqueue(jobs chan<- string, url string) bool {
 		return false
 	case jobs <- url:
 		return true
+	}
+}
+
+func (r *stageRunner) updateProgress(stage string, wordIndex, variantIndex int, url string) bool {
+	if r.progress == nil {
+		return true
+	}
+
+	if err := r.progress.Set(stage, wordIndex, variantIndex); err != nil {
+		r.emit(Result{URL: url, Err: fmt.Errorf("write progress: %w", err)})
+		return false
+	}
+
+	return true
+}
+
+type progressState struct {
+	Stage        string `json:"stage"`
+	WordIndex    int    `json:"word_index"`
+	VariantIndex int    `json:"variant_index"`
+}
+
+type progressTracker struct {
+	path     string
+	mu       sync.Mutex
+	state    progressState
+	hasState bool
+}
+
+func newProgressTracker(path string) (*progressTracker, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+
+	tracker := &progressTracker{path: path}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return tracker, nil
+		}
+		return nil, fmt.Errorf("read progress file: %w", err)
+	}
+
+	if len(bytes.TrimSpace(data)) == 0 {
+		return tracker, nil
+	}
+
+	if err := json.Unmarshal(data, &tracker.state); err != nil {
+		return nil, fmt.Errorf("decode progress file: %w", err)
+	}
+
+	tracker.hasState = true
+
+	return tracker, nil
+}
+
+func (p *progressTracker) EnsureStage(stage string) error {
+	if p == nil {
+		return nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.hasState && stageRank(stage) <= stageRank(p.state.Stage) {
+		return nil
+	}
+
+	p.state = progressState{Stage: stage}
+	p.hasState = true
+
+	return p.writeLocked()
+}
+
+func (p *progressTracker) StageCompleted(stage string) bool {
+	if p == nil {
+		return false
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.hasState {
+		return false
+	}
+
+	return stageRank(stage) < stageRank(p.state.Stage)
+}
+
+func (p *progressTracker) Allow(stage string, wordIndex, variantIndex int) bool {
+	if p == nil {
+		return true
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if !p.hasState {
+		return true
+	}
+
+	currentStage := stageRank(stage)
+	storedStage := stageRank(p.state.Stage)
+
+	if currentStage < storedStage {
+		return false
+	}
+	if currentStage > storedStage {
+		return true
+	}
+
+	if wordIndex < p.state.WordIndex {
+		return false
+	}
+	if wordIndex > p.state.WordIndex {
+		return true
+	}
+
+	return variantIndex >= p.state.VariantIndex
+}
+
+func (p *progressTracker) Set(stage string, wordIndex, variantIndex int) error {
+	if p == nil {
+		return nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.state = progressState{
+		Stage:        stage,
+		WordIndex:    wordIndex,
+		VariantIndex: variantIndex,
+	}
+	p.hasState = true
+
+	return p.writeLocked()
+}
+
+func (p *progressTracker) State() progressState {
+	if p == nil {
+		return progressState{}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return p.state
+}
+
+func (p *progressTracker) writeLocked() error {
+	if p == nil {
+		return nil
+	}
+
+	if err := ensureProgressDir(p.path); err != nil {
+		return err
+	}
+
+	dir := filepath.Dir(p.path)
+	tmp, err := os.CreateTemp(dir, "progress-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create progress temp file: %w", err)
+	}
+
+	encoder := json.NewEncoder(tmp)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(p.state); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return fmt.Errorf("encode progress checkpoint: %w", err)
+	}
+
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("close progress temp file: %w", err)
+	}
+
+	if err := os.Rename(tmp.Name(), p.path); err != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("replace progress file: %w", err)
+	}
+
+	return nil
+}
+
+func ensureProgressDir(path string) error {
+	dir := filepath.Dir(path)
+	if dir == "." || dir == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create progress directory: %w", err)
+	}
+
+	return nil
+}
+
+func stageRank(stage string) int {
+	switch stage {
+	case progressStageQuick:
+		return 0
+	case progressStagePrimary:
+		return 1
+	case progressStageComplete:
+		return 2
+	default:
+		return -1
 	}
 }
 

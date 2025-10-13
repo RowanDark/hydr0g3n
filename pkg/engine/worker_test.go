@@ -57,7 +57,7 @@ func TestStageRunnerRunEmitsResults(t *testing.T) {
 		results:     resultsCh,
 	}
 
-	positive, err := runner.run(wordlistPath)
+	positive, err := runner.run(progressStagePrimary, wordlistPath, progressStageComplete, progressStageComplete)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
