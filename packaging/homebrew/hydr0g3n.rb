@@ -20,6 +20,10 @@
     {{- range $index, $element := .Install }}
     {{ . -}}
     {{- end }}
+    bash_completion.install "completions/hydro.bash" => "hydro"
+    zsh_completion.install "completions/hydro.zsh" => "_hydro"
+    fish_completion.install "completions/hydro.fish"
+    man1.install "man/hydro.1"
   end
   {{- else if $.HasOnlyAmd64MacOsPkg }}
   url "{{ $element.DownloadURL }}"
@@ -66,6 +70,10 @@
       {{- range $index, $element := .Install }}
       {{ . -}}
       {{- end }}
+      bash_completion.install "completions/hydro.bash" => "hydro"
+      zsh_completion.install "completions/hydro.zsh" => "_hydro"
+      fish_completion.install "completions/hydro.fish"
+      man1.install "man/hydro.1"
     end
   end
   {{- end }}
