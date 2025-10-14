@@ -51,6 +51,9 @@ func main() {
 		completionScript    = flag.String("completion-script", "", "Print shell completion script for the specified shell (bash, zsh, fish)")
 		dryRun              = flag.Bool("dry-run", false, "Display planned permutations without sending any requests")
 		progressFile        = flag.String("progress-file", "", "Path to store progress checkpoints for resuming runs")
+		aggressive          = flag.Bool("aggressive", false, "Enable aggressive permutations that may disrupt targets")
+		recursive           = flag.Bool("recursive", false, "Enable recursive discovery that can rapidly expand scope")
+		confirmLegal        = flag.Bool("confirm-legal", false, "Acknowledge that you are authorized for aggressive or recursive scans")
 	)
 
 	flag.Usage = func() {
@@ -63,6 +66,22 @@ func main() {
 	}
 
 	flag.Parse()
+
+	destructiveScan := *aggressive || *recursive
+	if destructiveScan {
+		banner := strings.TrimSpace(`
+HYDRO SAFETY NOTICE
+Aggressive or recursive fuzzing can stress or damage target systems and may be illegal without explicit authorization.
+Only continue if you are operating within the law and the documented scope of your engagement.`)
+
+		fmt.Fprintln(os.Stderr, banner)
+		fmt.Fprintln(os.Stderr)
+
+		if !*confirmLegal {
+			fmt.Fprintln(os.Stderr, "Refusing to continue without --confirm-legal to acknowledge authorization.")
+			os.Exit(2)
+		}
+	}
 
 	viewMode, err := output.ParseViewMode(*viewModeFlag)
 	if err != nil {
@@ -157,6 +176,16 @@ func main() {
 		fmt.Sprintf("no_baseline=%t", *noBaseline),
 		fmt.Sprintf("beginner=%t", *beginner),
 		fmt.Sprintf("binary=%s", binaryBase),
+	}
+
+	if *aggressive {
+		runConfigEntries = append(runConfigEntries, "aggressive=true")
+	}
+	if *recursive {
+		runConfigEntries = append(runConfigEntries, "recursive=true")
+	}
+	if *confirmLegal {
+		runConfigEntries = append(runConfigEntries, "confirm_legal=true")
 	}
 
 	if *matchStatus != "" {

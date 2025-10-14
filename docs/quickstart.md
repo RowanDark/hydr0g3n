@@ -63,6 +63,15 @@ The commands below progress from basic to advanced usage. Feel free to copy them
    ./hydro -u https://portal.example.com/FUZZ -w examples/common.txt --view tree --color-mode always --color-preset protanopia
    ```
 
+## Aggressive and recursive scans
+
+`hydro` ships with optional flags for power users:
+
+- `--aggressive` enables heavier permutations that can hammer a target.
+- `--recursive` tells hydro to automatically queue paths that look like new directories.
+
+These modes can expand coverage quickly, but they also increase the risk of disrupting a system or stepping outside the scope of an engagement. Whenever you supply either flag, hydro prints a safety reminder and refuses to start unless you also add `--confirm-legal` to acknowledge that you have explicit permission to run a potentially destructive scan.
+
 ## Understanding `HEAD` vs `GET`
 
 `hydro` defaults to the HTTP `HEAD` method. A `HEAD` request retrieves only response headers and the status code, skipping the body. This makes enumeration faster and lighter on the target. Switching to `GET` downloads the full body, which:
