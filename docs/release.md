@@ -16,3 +16,17 @@ To allow the workflow to sign release artifacts:
 3. If the key is protected with a passphrase, store it in the `GPG_PASSPHRASE` secret. Leave this secret unset if your key does not have a passphrase.
 
 When both secrets are configured, the release workflow will import the private key during the run and use it to sign every archive as well as the checksum file. If the secrets are not defined, the signing step is skipped and the workflow behaves exactly as it did before.
+
+## Release v1.0.0 checklist
+
+For the `Release v1.0.0` gating pull request, maintainers should confirm the following items before tagging:
+
+- [ ] The changelog contains an entry for v1.0.0 summarizing the release scope.
+- [ ] GoReleaser can produce signed artifacts using the configured GPG key material.
+- [ ] Continuous integration builds and tests pass on the default branch.
+- [ ] At least one integration test covering the full scan workflow is green.
+- [ ] The generated manpage and shell completions are up to date.
+- [ ] The `LICENSE` file matches the distributed binaries.
+- [ ] The contributor documentation reflects the current processes and tooling.
+
+Ticking these boxes in the PR body provides an auditable record that the release prerequisites have been met.
