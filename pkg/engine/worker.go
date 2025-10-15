@@ -24,14 +24,22 @@ import (
 
 // Result captures the outcome of a single request executed by the engine.
 type Result struct {
-	URL           string
-	StatusCode    int
-	ContentLength int64
-	Duration      time.Duration
-	Body          []byte
-	Err           error
-	Similarity    float64
-	HasSimilarity bool
+	URL            string
+	StatusCode     int
+	ContentLength  int64
+	Duration       time.Duration
+	Body           []byte
+	RequestMethod  string
+	RequestURL     string
+	RequestProto   string
+	RequestHost    string
+	RequestHeader  http.Header
+	ResponseProto  string
+	ResponseStatus string
+	ResponseHeader http.Header
+	Err            error
+	Similarity     float64
+	HasSimilarity  bool
 }
 
 // Config represents the parameters required to execute a fuzzing run.
@@ -249,7 +257,7 @@ func Run(ctx context.Context, cfg Config) (<-chan Result, error) {
 }
 
 func executeRequest(ctx context.Context, client *httpclient.Client, url string, timeout time.Duration, method string, opts *httpclient.RequestOptions) Result {
-	result := Result{URL: url}
+	result := Result{URL: url, RequestMethod: method, RequestURL: url}
 
 	reqCtx := ctx
 	if timeout > 0 {
@@ -269,6 +277,20 @@ func executeRequest(ctx context.Context, client *httpclient.Client, url string, 
 
 	result.StatusCode = resp.StatusCode
 	result.ContentLength = resp.ContentLength
+	result.ResponseProto = resp.Proto
+	result.ResponseStatus = resp.Status
+	result.ResponseHeader = resp.Header.Clone()
+
+	if resp.Request != nil {
+		request := resp.Request
+		result.RequestMethod = request.Method
+		if request.URL != nil {
+			result.RequestURL = request.URL.String()
+		}
+		result.RequestProto = request.Proto
+		result.RequestHost = request.Host
+		result.RequestHeader = request.Header.Clone()
+	}
 
 	const maxBodyBytes = 1024 * 1024
 	reader := io.LimitReader(resp.Body, maxBodyBytes)
