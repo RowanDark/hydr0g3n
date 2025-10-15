@@ -22,8 +22,27 @@ import (
 	"hydr0g3n/pkg/templater"
 )
 
+const asciiBanner = `
+
+                                                                                 
+ ▄▄                        ▄▄              ▄▄▄▄               ▄▄▄▄▄             
+ ██                        ██             ██▀▀██             █▀▀▀▀██▄           
+ ██▄████▄  ▀██  ███   ▄███▄██   ██▄████  ██    ██   ▄███▄██       ▄██  ██▄████▄ 
+ ██▀   ██   ██▄ ██   ██▀  ▀██   ██▀      ██ ██ ██  ██▀  ▀██    █████   ██▀   ██ 
+ ██    ██    ████▀   ██    ██   ██       ██    ██  ██    ██       ▀██  ██    ██ 
+ ██    ██     ███    ▀██▄▄███   ██        ██▄▄██   ▀██▄▄███  █▄▄▄▄██▀  ██    ██ 
+ ▀▀    ▀▀     ██       ▀▀▀ ▀▀   ▀▀         ▀▀▀▀     ▄▀▀▀ ██   ▀▀▀▀▀    ▀▀    ▀▀ 
+            ███                                     ▀████▀▀                     
+                                                                                 
+`
+
 func main() {
 	const binaryName = "hydro"
+
+	fmt.Fprint(os.Stderr, asciiBanner)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "©2025 RowanDark")
+	fmt.Fprintln(os.Stderr)
 
 	var (
 		targetURL           = flag.String("u", "", "Target URL or template (required)")
