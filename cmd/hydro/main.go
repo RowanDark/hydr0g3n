@@ -47,6 +47,7 @@ func main() {
 		colorModeFlag       = flag.String("color-mode", "auto", "Color output mode (auto, always, never)")
 		colorPresetFlag     = flag.String("color-preset", "default", "Color palette for pretty output (default, protanopia, tritanopia, blue-light)")
 		burpExport          = flag.String("burp-export", "", "Write matched requests and responses to a Burp-compatible XML file")
+		burpHost            = flag.String("burp-host", "", "POST matched findings to a Burp Collaborator endpoint")
 		preHook             = flag.String("pre-hook", "", "Shell command to run once before requests to fetch auth headers (stdout JSON)")
 		completionScript    = flag.String("completion-script", "", "Print shell completion script for the specified shell (bash, zsh, fish)")
 		dryRun              = flag.Bool("dry-run", false, "Display planned permutations without sending any requests")
@@ -200,6 +201,9 @@ Only continue if you are operating within the law and the documented scope of yo
 	if *burpExport != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("burp_export=%s", *burpExport))
 	}
+	if trimmedHost := strings.TrimSpace(*burpHost); trimmedHost != "" {
+		runConfigEntries = append(runConfigEntries, fmt.Sprintf("burp_host=%s", trimmedHost))
+	}
 	if *outputFormat != "" {
 		runConfigEntries = append(runConfigEntries, fmt.Sprintf("output_format=%s", strings.ToLower(*outputFormat)))
 	}
@@ -350,6 +354,7 @@ Only continue if you are operating within the law and the documented scope of yo
 	var (
 		jsonlWriter *output.JSONLWriter
 		burpWriter  *output.BurpWriter
+		burpPoster  *output.BurpPoster
 		writerErr   error
 	)
 
@@ -386,6 +391,14 @@ Only continue if you are operating within the law and the documented scope of yo
 		}()
 	}
 
+	if trimmed := strings.TrimSpace(*burpHost); trimmed != "" {
+		burpPoster, err = output.NewBurpPoster(trimmed, method)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", binaryName, err)
+			os.Exit(1)
+		}
+	}
+
 	if jsonlWriter != nil {
 		header := output.RunHeader{
 			RunID:     runIdentifier,
@@ -420,6 +433,11 @@ Only continue if you are operating within the law and the documented scope of yo
 			}
 			if burpWriter != nil && res.Err == nil {
 				if err := burpWriter.Write(res); err != nil && writerErr == nil {
+					writerErr = err
+				}
+			}
+			if burpPoster != nil && res.Err == nil {
+				if err := burpPoster.Write(res); err != nil && writerErr == nil {
 					writerErr = err
 				}
 			}

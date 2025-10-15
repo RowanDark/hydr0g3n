@@ -3,6 +3,7 @@
 _arguments \
   '--beginner[Enable beginner-friendly defaults]' \
   '--burp-export[Write matched requests and responses to a Burp-compatible XML file]:value:_guard "^-" "option argument"' \
+  '--burp-host[POST matched findings to a Burp Collaborator endpoint]:value:_guard "^-" "option argument"' \
   '--concurrency[Number of concurrent workers]:value:_guard "^-" "option argument"' \
   '--filter-size[Filter visible hits by response size range (min-max bytes)]:value:_guard "^-" "option argument"' \
   '--follow-redirects[Follow HTTP redirects (up to 5 hops)]' \

@@ -1,6 +1,7 @@
 # fish completion for hydro
 complete -c hydro -l beginner -d 'Enable beginner-friendly defaults'
 complete -c hydro -l burp-export -r -d 'Write matched requests and responses to a Burp-compatible XML file'
+complete -c hydro -l burp-host -r -d 'POST matched findings to a Burp Collaborator endpoint'
 complete -c hydro -l concurrency -r -d 'Number of concurrent workers'
 complete -c hydro -l filter-size -r -d 'Filter visible hits by response size range (min-max bytes)'
 complete -c hydro -l follow-redirects -d 'Follow HTTP redirects (up to 5 hops)'
